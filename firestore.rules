@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - email: string (required)
+    //   - displayName: string (required)
+    //   - photoURL: string (optional)
+    //   - role: string (required, ['user', 'admin'])
+    //
+    // Collection: cars
+    // Fields:
+    //   - make: string (required)
+    //   - model: string (required)
+    //   - year: number (required)
+    //   - category: string (required)
+    //   - pricePerDay: number (required)
+    //   - status: string (required, ['available', 'rented', 'maintenance'])
+    //
+    // Collection: bookings
+    // Fields:
+    //   - carId: string (required)
+    //   - userId: string (required)
+    //   - startDate: string (required)
+    //   - endDate: string (required)
+    //   - totalPrice: number (required)
+    //   - status: string (required, ['pending', 'confirmed', 'cancelled', 'completed'])
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+         isSuperAdmin());
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+             request.auth.token.email == "leom57583@gmail.com" && 
+             request.auth.token.email_verified == true;
+    }
+
+    function isValidCar(data) {
+      return data.make is string && data.make.size() > 0 && data.make.size() < 100 &&
+             data.model is string && data.model.size() > 0 && data.model.size() < 100 &&
+             data.year is number && data.year >= 1900 && data.year <= 2100 &&
+             data.category is string && data.category.size() < 50 &&
+             data.pricePerDay is number && data.pricePerDay > 0 &&
+             data.transmission is string && data.transmission.size() < 50 &&
+             data.fuelType is string && data.fuelType.size() < 50 &&
+             data.seats is number && data.seats > 0 && data.seats < 100 &&
+             data.imageUrl is string && data.imageUrl.size() < 1000000 &&
+             data.status in ['available', 'rented', 'maintenance'] &&
+             data.description is string && data.description.size() < 2000 &&
+             data.features is list && data.features.size() < 50;
+    }
+
+    function isValidBooking(data) {
+      return data.carId is string && data.carId.size() < 128 &&
+             data.userId == request.auth.uid &&
+             data.startDate is string && data.startDate.size() < 50 &&
+             data.endDate is string && data.endDate.size() < 50 &&
+             data.totalPrice is number && data.totalPrice > 0 &&
+             data.status in ['pending', 'confirmed', 'cancelled', 'completed'] &&
+             (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() < 100)) &&
+             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() < 50));
+    }
+
+    function isValidUser(data) {
+      return data.email is string && isValidEmail(data.email) &&
+             data.username is string && data.username.size() >= 3 && data.username.size() < 30 &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             data.role in ['user', 'admin'] &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 500)) &&
+             (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() < 30)) &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() < 500)) &&
+             (!('uid' in data) || (data.uid is string && data.uid.size() < 128));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && 
+                      isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'user' || isSuperAdmin());
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role && isValidUser(request.resource.data)) || isSuperAdmin() || (isAdmin() && request.resource.data.role == resource.data.role);
+    }
+
+    match /cars/{carId} {
+      allow read: if true; // Publicly viewable fleet
+      allow write: if isAdmin() && isValidCar(request.resource.data);
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (resource.data.userId == request.auth.uid && request.resource.data.status == 'cancelled' && resource.data.status == 'pending') ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}

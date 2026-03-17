@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html {
+    @apply transition-colors duration-300 bg-[#F8F9FA];
+  }
+  
+  html.dark {
+    @apply bg-[#0A0A0A];
+  }
+  
+  body {
+    @apply transition-colors duration-300 bg-transparent;
+  }
+}
